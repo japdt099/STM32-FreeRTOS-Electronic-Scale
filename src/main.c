@@ -460,34 +460,30 @@ static void Task_UART(void *pvParameters)
 
 /* ===================== Tickless Idle / STOP mode hooks ===================== */
 /*
- * In FreeRTOSConfig.h, enable:
+ * IMPORTANT:
+ * The FreeRTOS Cortex-M tickless implementation enters this hook with
+ * interrupts already masked. Do not call __disable_irq()/__enable_irq() here.
  *
- * #define configUSE_TICKLESS_IDLE 1
- *
- * If your FreeRTOS port calls these hooks via macros, connect them there.
- * This project uses deep sleep (STOP-style entry) during idle periods.
+ * configPRE_SLEEP_PROCESSING() in FreeRTOSConfig.h calls this function and
+ * then sets xExpectedIdleTime = 0, so the FreeRTOS port will not execute a
+ * second WFI after this function returns.
  */
 void PreSleepProcessing(uint32_t xExpectedIdleTime)
 {
     (void)xExpectedIdleTime;
 
-    __disable_irq();
-
-    SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
-
-    __DSB();
-    __ISB();
-    __WFI();
-
-    SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
+    /*
+     * Enter STM32F1 STOP mode with the main regulator ON.
+     * Wake-up occurs on an enabled interrupt.
+     */
+    PWR_EnterSTOPMode(PWR_Regulator_ON, PWR_STOPEntry_WFI);
 
     /*
-     * STM32F1 wakes from STOP using HSI.
-     * Restore the normal clock tree used by the application.
+     * STM32F1 wakes from STOP using HSI and the PLL/system clock tree is no
+     * longer in the normal run configuration. Restore the clock setup before
+     * returning to the FreeRTOS port.
      */
     SystemInit();
-
-    __enable_irq();
 }
 
 void PostSleepProcessing(uint32_t xExpectedIdleTime)
