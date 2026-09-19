@@ -39,10 +39,6 @@ typedef struct {
     uint8_t tare_event;
 } ScaleMessage_t;
 
-/*
- * Two queues are intentionally used because xQueueReceive() removes an item.
- * Each consumer therefore gets its own 1-element "latest value" mailbox.
- */
 static QueueHandle_t xDisplayQueue = NULL;
 static QueueHandle_t xUartQueue = NULL;
 
@@ -303,10 +299,6 @@ static uint8_t Button_Pressed(void)
 
 /* ===================== FreeRTOS tasks ===================== */
 
-/*
- * Producer task:
- * HX711 -> filter/deadband -> weight message -> queues
- */
 static void Task_ReadWeight(void *pvParameters)
 {
     ScaleMessage_t msg;
@@ -364,10 +356,6 @@ static void Task_ReadWeight(void *pvParameters)
 
         msg.weight_kg = w;
 
-        /*
-         * Each queue has length 1, so xQueueOverwrite() keeps only the
-         * newest sample and prevents a slow consumer from building backlog.
-         */
         xQueueOverwrite(xDisplayQueue, &msg);
         xQueueOverwrite(xUartQueue, &msg);
 
@@ -375,10 +363,6 @@ static void Task_ReadWeight(void *pvParameters)
     }
 }
 
-/*
- * Consumer task:
- * Receives weight data from queue and owns all LCD operations.
- */
 static void Task_Display(void *pvParameters)
 {
     ScaleMessage_t msg;
@@ -421,10 +405,6 @@ static void Task_Display(void *pvParameters)
     }
 }
 
-/*
- * Consumer task:
- * Receives the latest measurement through its own queue and transmits UART.
- */
 static void Task_UART(void *pvParameters)
 {
     ScaleMessage_t msg;
@@ -449,40 +429,18 @@ static void Task_UART(void *pvParameters)
                 UART_SendString(buf);
             }
 
-            /*
-             * UART is intentionally slower than acquisition.
-             * The 1-element queue keeps the newest value while this task sleeps.
-             */
             vTaskDelay(pdMS_TO_TICKS(200));
         }
     }
 }
 
 /* ===================== Tickless Idle / STOP mode hooks ===================== */
-/*
- * IMPORTANT:
- * The FreeRTOS Cortex-M tickless implementation enters this hook with
- * interrupts already masked. Do not call __disable_irq()/__enable_irq() here.
- *
- * configPRE_SLEEP_PROCESSING() in FreeRTOSConfig.h calls this function and
- * then sets xExpectedIdleTime = 0, so the FreeRTOS port will not execute a
- * second WFI after this function returns.
- */
 void PreSleepProcessing(uint32_t xExpectedIdleTime)
 {
     (void)xExpectedIdleTime;
 
-    /*
-     * Enter STM32F1 STOP mode with the main regulator ON.
-     * Wake-up occurs on an enabled interrupt.
-     */
     PWR_EnterSTOPMode(PWR_Regulator_ON, PWR_STOPEntry_WFI);
 
-    /*
-     * STM32F1 wakes from STOP using HSI and the PLL/system clock tree is no
-     * longer in the normal run configuration. Restore the clock setup before
-     * returning to the FreeRTOS port.
-     */
     SystemInit();
 }
 
@@ -507,10 +465,6 @@ int main(void)
     LCD_SetCursor(0, 0);
     LCD_Print("0.000 kg");
 
-    /*
-     * Length = 1 makes each queue a "latest value mailbox".
-     * Display and UART each receive their own copy of every published state.
-     */
     xDisplayQueue = xQueueCreate(1, sizeof(ScaleMessage_t));
     xUartQueue = xQueueCreate(1, sizeof(ScaleMessage_t));
 
